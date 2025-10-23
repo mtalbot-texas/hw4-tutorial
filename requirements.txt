@@ -1,3 +1,5 @@
-google-genai
+langchain
+langgraph
+langchain-google-genai
 streamlit
 python-dotenv

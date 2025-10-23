@@ -1,0 +1,17 @@
+# venvs & python cache
+.venv/
+__pycache__/
+.ipynb_checkpoints/
+
+# environment files
+.env
+*.env.*
+
+# logs
+*.log
+logs/
+*.log.*
+
+# local settings/secrets
+*.json
+!package.json            # keep this if you ever have a JS project
