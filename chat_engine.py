@@ -13,6 +13,9 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 
+# --- Added: initialize file logging with startup timestamp ---
+logging.basicConfig(filename=f"agentTutorial-{time.strftime('%m-%d-%H%S')}.log", level=logging.INFO)
+
 logger = logging.getLogger("chat_engine")  # inherits root handlers
 
 
@@ -165,6 +168,10 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
         user_msg = HumanMessage(content=f"User question: {question}\nReturn only the SQL in a fenced code block.")
         reply = llm.invoke([sys_msg, user_msg])
         sql = _extract_sql(_content_to_text(getattr(reply, "content", "")))  # _content_to_text is defined above in your module
+
+        # --- Added: log generated SQL BEFORE sanitization (1/2) ---
+        logger.info("mimic:generated_sql_before_sanitize sql=%s", sql)
+
         if not sql:
             raise RuntimeError("LLM failed to produce SQL.")
         sql = _sanitize(sql, limit_cap)
@@ -180,6 +187,10 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
             use_legacy_sql=False,
             maximum_bytes_billed=int(os.getenv("BQ_MAX_BYTES_BILLED", "1000000000")),  # 1GB default
         )
+
+        # --- Added: log SQL AFTER sanitization, right before execution (2/2) ---
+        logger.info("mimic:generated_sql_after_sanitize sql=%s", sql)
+
         df = client.query(sql, job_config=job_cfg).to_dataframe()
         preview = _csv_preview(df, n=min(20, limit_cap))
         elapsed = time.monotonic() - started
