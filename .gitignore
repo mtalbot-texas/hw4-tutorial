@@ -5,7 +5,7 @@ __pycache__/
 
 # environment files
 .env
-*.env.*
+.env.*
 
 # logs
 *.log
@@ -14,4 +14,5 @@ logs/
 
 # local settings/secrets
 *.json
-!package.json            # keep this if you ever have a JS project
+!package.json          
+*.gz

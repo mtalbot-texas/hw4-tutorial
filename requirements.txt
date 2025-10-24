@@ -1,5 +1,15 @@
+# App & UI
+streamlit
+python-dotenv
+
+# LLM stack
 langchain
 langgraph
 langchain-google-genai
-streamlit
-python-dotenv
+
+# BigQuery + DataFrame stack (needed for to_dataframe)
+google-cloud-bigquery
+google-auth
+pandas
+pyarrow
+db-dtypes
