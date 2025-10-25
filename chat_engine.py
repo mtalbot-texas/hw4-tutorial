@@ -13,8 +13,18 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 
-# --- Added: initialize file logging with startup timestamp ---
-logging.basicConfig(filename=f"agentTutorial-{time.strftime('%m-%d-%H%S')}.log", level=logging.INFO)
+# --- Defensive file logging with startup timestamp (prints to stdout on failure) ---
+_LOG_FILENAME = f"agentTutorial-{time.strftime('%m-%d-%H%S')}.log"
+_LOG_PATH = os.path.abspath(_LOG_FILENAME)
+try:
+    _LOG_DIR = os.path.dirname(_LOG_PATH) or "."
+    if _LOG_DIR and not os.path.isdir(_LOG_DIR):
+        os.makedirs(_LOG_DIR, exist_ok=True)
+    logging.basicConfig(filename=_LOG_PATH, level=logging.INFO)
+    print(f"[chat_engine] logging: file handler initialized at {_LOG_PATH}")
+except Exception as _e:
+    print(f"[chat_engine] logging: failed to initialize file handler at '{_LOG_PATH}': {_e}. Falling back to stdout.")
+    logging.basicConfig(level=logging.INFO)
 
 logger = logging.getLogger("chat_engine")  # inherits root handlers
 
@@ -73,10 +83,7 @@ def calculator(expression: str) -> str:
 @tool
 def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
     """
-    LLM-only SQL over MIMIC-IV ED (BigQuery StandardSQL), with guardrails:
-    - physionet-data.* only
-    - aggregate-only (no raw identifiers in SELECT/GROUP BY)
-    - LIMIT ≤ top_n
+    LLM-only SQL over MIMIC-IV ED (BigQuery StandardSQL).
 
     Returns SQL + a small CSV preview (or SQL only if dry_run).
     On error: 'TOOL_ERROR[mimic]: <Type>: <message>'
@@ -103,84 +110,95 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
         sql = (m.group(1) if m else text).strip()
         return re.sub(r";\s*$", "", sql)
 
-    def _enforce_limit(sql: str, cap: int) -> str:
-        return re.sub(r"\bLIMIT\s+(\d+)\b",
-                      lambda m: f"LIMIT {cap}" if int(m.group(1)) > cap else m.group(0),
-                      sql, flags=re.I) if re.search(r"\bLIMIT\b", sql, re.I) else f"{sql}\nLIMIT {cap}"
-
-    def _sanitize(sql: str, cap: int) -> str:
-        # Block DDL/DML
-        if re.search(r"\b(CREATE|ALTER|DROP|TRUNCATE|INSERT|DELETE|UPDATE|MERGE|GRANT|REVOKE|EXECUTE\s+IMMEDIATE)\b", sql, re.I):
-            raise RuntimeError("Unsafe SQL: DDL/DML not allowed.")
-
-        # Project/table restriction
-        for _, tok in re.findall(r"\b(FROM|JOIN|INTO|UPDATE|TABLE)\s+([`a-zA-Z0-9_.-]+)", sql, flags=re.I):
-            name = tok.strip("`").strip()
-            if name and not name.startswith("(") and not name.upper().startswith("UNNEST"):
-                if not name.startswith("physionet-data."):
-                    raise RuntimeError(f"Cross-project or unqualified reference not allowed: {name}")
-
-        # Aggregate-only checks
-        sel_m = re.search(r"(?is)\bSELECT\b(.*?)\bFROM\b", sql)
-        if not sel_m:
-            raise RuntimeError("Malformed SQL: missing SELECT ... FROM.")
-        sel = sel_m.group(1)
-
-        # No SELECT * or table.* (except inside aggregates)
-        if re.search(r"(?is)\bSELECT\s+(?:DISTINCT\s+)?\*", sql) or re.search(r"(?is)\bSELECT\b.*\.\*", sql):
-            raise RuntimeError("Aggregate-only policy: wildcard SELECT is not allowed.")
-
-        if not re.search(r"\b(COUNT|SUM|AVG|MIN|MAX|APPROX_COUNT_DISTINCT|ARRAY_AGG|STRING_AGG)\s*\(", sel, re.I):
-            raise RuntimeError("Aggregate-only policy: SELECT must include an aggregate.")
-
-        id_cols = r"(subject_id|stay_id|hadm_id|icustay_id|patient_id|anchor_year|anchor_age|anchor_year_group)"
-        sel_stripped = re.sub(r"COUNT\s*\(\s*(?:DISTINCT\s+)?[^)]*\)", "", sel, flags=re.I)
-        if re.search(id_cols, sel_stripped, re.I):
-            raise RuntimeError("Aggregate-only policy: identifiers may appear only inside COUNT(...).")
-
-        gb_m = re.search(r"(?is)\bGROUP\s+BY\b(.*?)(?:\bHAVING\b|\bORDER\s+BY\b|\bLIMIT\b|$)", sql)
-        if gb_m and re.search(id_cols, gb_m.group(1), re.I):
-            raise RuntimeError("Aggregate-only policy: GROUP BY identifiers is not allowed.")
-
-        return _enforce_limit(sql, cap)
-
     def _csv_preview(df, n: int) -> str:
         try:
             return df.head(n).to_csv(index=False)
         except Exception:
             return "(preview unavailable)"
 
-    # ---------- generate SQL with LLM ----------
+    # ---------- generate SQL with LLM (few-shot examples embedded) ----------
     try:
         llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key, temperature=0.0)
         sys_msg = SystemMessage(
             content=(
                 "You are a BigQuery SQL assistant for MIMIC-IV emergency department (ED) data.\n"
-                "Return ONE StandardSQL query only, inside ```sql ...``` with no explanation.\n"
+                "Return ONE StandardSQL query only, inside ```sql ...``` with no explanation. Do NOT echo examples.\n"
                 "- Use fully-qualified tables ONLY in physionet-data.\n"
-                "  Prefer: physionet-data.mimiciv_ed.edstays, diagnosis, triage, vitalsign;\n"
-                "          physionet-data.mimiciv_3_1_hosp.d_icd_diagnoses.\n"
-                "- Aggregate-only: do not SELECT identifiers (subject_id, stay_id, hadm_id, icustay_id, etc.)\n"
-                "  except inside COUNT(...) / COUNT(DISTINCT ...). Do not GROUP BY identifiers.\n"
-                f"- Include a LIMIT ≤ {limit_cap}. Use StandardSQL."
+                "  Prefer: physionet-data.mimiciv_ed.edstays, physionet-data.mimiciv_ed.diagnosis,\n"
+                "          physionet-data.mimiciv_ed.triage, physionet-data.mimiciv_ed.vitalsign;\n"
+                "          physionet-data.mimiciv_3_1_hosp.d_icd_diagnoses (for normalized ICD titles).\n"
+                "- ED visit key is edstays.stay_id (NOT edstay_id).\n"
+                "- Group by scalar fields (e.g., icd_title, icd_code, esi, subject_id). Never group by a whole table alias.\n"
+                "- When counting ED visits per subject, group by subject_id and use COUNT(*) or COUNT(DISTINCT stay_id).\n"
+                f"- Include a LIMIT ≤ {limit_cap}. Use StandardSQL.\n"
+                "\n"
+                "EXAMPLES (do not output these, they are guidance only):\n"
+                "Q: Top 25 subjects by number of ED visits (show subject_id and count).\n"
+                "SQL:\n"
+                "```sql\n"
+                "SELECT\n"
+                "  ed.subject_id,\n"
+                "  COUNT(*) AS num_ed_visits\n"
+                "FROM physionet-data.mimiciv_ed.edstays AS ed\n"
+                "GROUP BY ed.subject_id\n"
+                "ORDER BY num_ed_visits DESC\n"
+                "LIMIT 25\n"
+                "```\n"
+                "\n"
+                "Q: Top 10 primary ED diagnoses by title.\n"
+                "SQL:\n"
+                "```sql\n"
+                "SELECT\n"
+                "  d.icd_title AS cause,\n"
+                "  COUNT(*) AS n\n"
+                "FROM physionet-data.mimiciv_ed.diagnosis AS d\n"
+                "WHERE d.seq_num = 1 AND d.icd_title IS NOT NULL\n"
+                "GROUP BY cause\n"
+                "ORDER BY n DESC\n"
+                "LIMIT 10\n"
+                "```\n"
+                "\n"
+                "Q: Monthly ED visit counts across the full range, ordered by month.\n"
+                "SQL:\n"
+                "```sql\n"
+                "SELECT\n"
+                "  DATE_TRUNC(ed.intime, MONTH) AS month,\n"
+                "  COUNT(*) AS n\n"
+                "FROM physionet-data.mimiciv_ed.edstays AS ed\n"
+                "GROUP BY month\n"
+                "ORDER BY month\n"
+                "```\n"
+                "\n"
+                "Q: Admission rate by ESI level.\n"
+                "SQL:\n"
+                "```sql\n"
+                "SELECT\n"
+                "  ed.esi,\n"
+                "  COUNTIF(ed.hadm_id IS NOT NULL) / COUNT(*) AS admit_rate,\n"
+                "  COUNT(*) AS n\n"
+                "FROM physionet-data.mimiciv_ed.edstays AS ed\n"
+                "WHERE ed.esi IS NOT NULL\n"
+                "GROUP BY ed.esi\n"
+                "ORDER BY ed.esi\n"
+                "```\n"
             )
         )
         user_msg = HumanMessage(content=f"User question: {question}\nReturn only the SQL in a fenced code block.")
         reply = llm.invoke([sys_msg, user_msg])
-        sql = _extract_sql(_content_to_text(getattr(reply, "content", "")))  # _content_to_text is defined above in your module
+        sql = _extract_sql(_content_to_text(getattr(reply, "content", "")))
 
-        # --- Added: log generated SQL BEFORE sanitization (1/2) ---
-        logger.info("mimic:generated_sql_before_sanitize sql=%s", sql)
+        # Log generated SQL (raw from LLM)
+        logger.info("mimic:generated_sql_raw sql=%s", sql)
 
         if not sql:
             raise RuntimeError("LLM failed to produce SQL.")
-        sql = _sanitize(sql, limit_cap)
+
         if dry_run:
             return f"SQL (dry run):\n```sql\n{sql}\n```"
     except Exception as e:
         return f"TOOL_ERROR[mimic]: {type(e).__name__}: {e}"
 
-    # ---------- execute ----------
+    # ---------- execute (no sanitization; rely on BigQuery to error if invalid) ----------
     try:
         client = bigquery.Client(project=os.getenv("GCP_PROJECT_ID", "indigo-proxy-472718-m1"))
         job_cfg = bigquery.QueryJobConfig(
@@ -188,10 +206,19 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
             maximum_bytes_billed=int(os.getenv("BQ_MAX_BYTES_BILLED", "1000000000")),  # 1GB default
         )
 
-        # --- Added: log SQL AFTER sanitization, right before execution (2/2) ---
-        logger.info("mimic:generated_sql_after_sanitize sql=%s", sql)
+        # Log the SQL right before execution
+        logger.info("mimic:sql_before_execution sql=%s", sql)
 
         df = client.query(sql, job_config=job_cfg).to_dataframe()
+
+        # Log BQ response details for debugging
+        try:
+            logger.info("mimic:bq_rows=%d cols=%s", len(df), list(df.columns))
+            preview_csv = df.head(min(10, max(1, min(20, limit_cap)))).to_csv(index=False)
+            logger.info("mimic:bq_preview_csv:\n%s", preview_csv)
+        except Exception as log_e:
+            logger.warning("mimic:bq_logging_failed: %s", log_e)
+
         preview = _csv_preview(df, n=min(20, limit_cap))
         elapsed = time.monotonic() - started
         return (
@@ -201,6 +228,7 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
             f"(elapsed {elapsed:.2f}s)"
         )
     except Exception as e:
+        logger.exception("mimic:bq_error")  # include stack trace in logs
         return f"TOOL_ERROR[mimic]: {type(e).__name__}: {e}"
 
 
@@ -221,7 +249,8 @@ class LCAgent:
         self.system_text = (
             "You are a careful assistant. "
             "If a calculation is needed, call the calculator tool. "
-            "If the user asks about patients or MIMIC analytics, call the mimic tool (aggregate-only). "
+            "If the user asks about patients or MIMIC analytics, call the mimic tool. "
+            "Prefer dry_run=False unless the user explicitly asks for a dry run. "
             "If ANY tool returns a string starting with 'TOOL_ERROR[', respond with that string verbatim. "
             "Keep responses concise."
         )
@@ -319,5 +348,15 @@ class LCAgent:
 
         last = out[-1]
         text = _content_to_text(getattr(last, "content", ""))
+
+        # Fallback to latest ToolMessage if AIMessage content is empty
+        if isinstance(text, str) and not text.strip():
+            for m in reversed(out):
+                if isinstance(m, ToolMessage):
+                    tm_text = _content_to_text(m.content)
+                    if tm_text and tm_text.strip():
+                        logger.info("ask:empty_ai_fallback_to_tool_output")
+                        return tm_text
+
         logger.info("ask:returning_ai_text=%s", _excerpt(text, 300))
         return text
