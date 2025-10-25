@@ -13,20 +13,41 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 
-# --- Defensive file logging with startup timestamp (prints to stdout on failure) ---
-_LOG_FILENAME = f"agentTutorial-{time.strftime('%m-%d-%H%S')}.log"
-_LOG_PATH = os.path.abspath(_LOG_FILENAME)
-try:
-    _LOG_DIR = os.path.dirname(_LOG_PATH) or "."
-    if _LOG_DIR and not os.path.isdir(_LOG_DIR):
-        os.makedirs(_LOG_DIR, exist_ok=True)
-    logging.basicConfig(filename=_LOG_PATH, level=logging.INFO)
-    print(f"[chat_engine] logging: file handler initialized at {_LOG_PATH}")
-except Exception as _e:
-    print(f"[chat_engine] logging: failed to initialize file handler at '{_LOG_PATH}': {_e}. Falling back to stdout.")
-    logging.basicConfig(level=logging.INFO)
 
-logger = logging.getLogger("chat_engine")  # inherits root handlers
+
+_LOG_FILENAME = f"agentTutorial-{time.strftime('%m-%d-%H%M%S')}.log"
+_LOG_PATH = os.path.abspath(_LOG_FILENAME)
+_LOG_DIR = os.path.dirname(_LOG_PATH) or "."
+
+try:
+    os.makedirs(_LOG_DIR, exist_ok=True)
+
+    logger = logging.getLogger("chat_engine")
+    logger.setLevel(logging.INFO)
+
+    # Remove prior FileHandlers to avoid duplicates on reloads
+    for h in list(logger.handlers):
+        if isinstance(h, logging.FileHandler):
+            logger.removeHandler(h)
+
+    fh = logging.FileHandler(_LOG_PATH, encoding="utf-8")
+    fh.setLevel(logging.INFO)
+    fh.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s"))
+    logger.addHandler(fh)
+
+    # Keep console output too
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        logger.addHandler(logging.StreamHandler())
+
+    print(f"[chat_engine] logging to {_LOG_PATH}")
+except Exception as _e:
+    # Fallback: console-only
+    logger = logging.getLogger("chat_engine")
+    logger.setLevel(logging.INFO)
+    if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
+        logger.addHandler(logging.StreamHandler())
+    print(f"[chat_engine] logging: failed to init file handler at '{_LOG_PATH}': {_e}. Using stdout.")
+
 
 
 def _excerpt(s: str, n: int = 400) -> str:
