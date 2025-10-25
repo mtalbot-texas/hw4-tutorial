@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import List, Dict
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -13,9 +14,10 @@ from langgraph.prebuilt import ToolNode
 
 
 # ----------------------------
-# Logging (minimal, idempotent)
+# Logging (minimal)
 # ----------------------------
 LOG_FILENAME = f"agentTutorial-{time.strftime('%m-%d-%H%M%S')}.log"
+
 
 def get_logger() -> logging.Logger:
     logger = logging.getLogger("chat_engine")
@@ -33,57 +35,14 @@ logger = get_logger()
 
 
 # ----------------------------
-# Example loading (external JSON)
+# Examples (read from JSON next to this file)
 # ----------------------------
-_EXAMPLES_CACHE: str | None = None
-
-
-def _resolve_examples_path() -> str:
-    """Return path to examples JSON. Env var MIMIC_EXAMPLES_JSON overrides.
-    Falls back to ./mimic_examples.json next to this file (or CWD if __file__ missing).
-    """
-    env = os.getenv("MIMIC_EXAMPLES_JSON")
-    if env and os.path.exists(env):
-        return env
-    try:
-        here = os.path.dirname(__file__)
-    except NameError:
-        here = os.getcwd()
-    return os.path.join(here, "mimic_examples.json")
-
-
-def _format_examples(examples: List[Dict[str, str]]) -> str:
-    blocks = []
-    for ex in examples:
-        q = (ex.get("q") or "").strip()
-        sql = (ex.get("sql") or "").strip()
-        if not q or not sql:
-            continue
-        blocks.append(f"Q: {q}\nSQL:\n```sql\n{sql}\n```")
-    return "\n\n".join(blocks)
-
 
 def _load_examples_text() -> str:
-    global _EXAMPLES_CACHE
-    if _EXAMPLES_CACHE is not None:
-        return _EXAMPLES_CACHE
-    path = _resolve_examples_path()
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        examples = data.get("examples") if isinstance(data, dict) else []
-        _EXAMPLES_CACHE = _format_examples(examples or [])
-        if _EXAMPLES_CACHE:
-            logger.info("examples:loaded from %s", path)
-        else:
-            logger.info("examples:none found in %s", path)
-    except FileNotFoundError:
-        logger.info("examples:file_not_found %s (continuing without examples)", path)
-        _EXAMPLES_CACHE = ""
-    except Exception as e:
-        logger.exception("examples:load_error %s", e)
-        _EXAMPLES_CACHE = ""
-    return _EXAMPLES_CACHE
+    data = json.loads((Path(__file__).parent / "mimic_examples.json").read_text(encoding="utf-8"))
+    return "\n\n".join(
+        f"Q: {ex['q']}\nSQL:\n```sql\n{ex['sql']}\n```" for ex in data["examples"]
+    )
 
 
 # ----------------------------
@@ -108,11 +67,8 @@ def calculator(expression: str) -> str:
 def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
     """LLM-only SQL over MIMIC-IV ED (BigQuery StandardSQL). Returns SQL + CSV preview.
 
-    Examples are loaded from JSON: set MIMIC_EXAMPLES_JSON or place mimic_examples.json
-    next to this file. The JSON schema is:
-      { "examples": [ { "q": "...", "sql": "..." }, ... ] }
+    Assumes a file named mimic_examples.json is in the same directory as this module.
     """
-    import time
     from google.cloud import bigquery
 
     started = time.monotonic()
@@ -128,7 +84,6 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
         return terr("RuntimeError", "Missing GEMINI_API_KEY/GOOGLE_API_KEY.")
 
     limit_cap = int(top_n or 50)
-    examples_txt = _load_examples_text()
 
     def extract_sql(text: str) -> str:
         m = re.search(r"```(?:sql)?\s*(.*?)```", text, flags=re.S | re.I)
@@ -152,7 +107,8 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
             "Group only by scalar fields; when counting ED visits per subject, group by subject_id.\n"
             f"Include a LIMIT ≤ {limit_cap}. Use StandardSQL.\n"
         )
-        examples = f"\nEXAMPLES (guidance only; do not echo):\n{examples_txt}\n" if examples_txt else ""
+        examples_txt = _load_examples_text()
+        examples = f"\nEXAMPLES (guidance only; do not echo):\n{examples_txt}\n"
         sys_msg = SystemMessage(content=rules + examples)
         user_msg = HumanMessage(content=f"User question: {question}\nReturn only the SQL in a fenced code block.")
         reply = llm.invoke([sys_msg, user_msg])
@@ -189,10 +145,7 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
 # Agent
 # ----------------------------
 class LCAgent:
-    """Lean LangGraph agent using Gemini + two tools.
-
-    Set MIMIC_EXAMPLES_JSON to point to your examples JSON if not using the default path.
-    """
+    """Lean LangGraph agent using Gemini + two tools."""
 
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash", temperature: float = 0.0):
         logger.info("LCAgent:init model=%s temp=%s", model, temperature)
@@ -218,7 +171,6 @@ class LCAgent:
     # --- graph nodes / routing ---
     def _llm_node(self, state: MessagesState):
         reply = self.llm.invoke(state["messages"])
-        # Minimal, useful trace
         if getattr(reply, "tool_calls", None):
             logger.info("llm_node:tool_calls=%s", [(tc.get("name"), tc.get("args")) for tc in reply.tool_calls])  # type: ignore[attr-defined]
         else:
@@ -230,13 +182,11 @@ class LCAgent:
         last = state["messages"][-1]
         return "tools" if isinstance(last, AIMessage) and getattr(last, "tool_calls", None) else END
 
-    # --- helpers ---
     @staticmethod
     def _to_lc_history(history: List[Dict[str, str]]):
         role_map = {"user": HumanMessage, "assistant": AIMessage}
         return [role_map[m.get("role")](m.get("content", "")) for m in history if m.get("role") in role_map]
 
-    # --- public API ---
     def ask(self, history: List[Dict[str, str]], user_input: str) -> str:
         messages = [SystemMessage(self.system_text)] + self._to_lc_history(history)
         if not messages or not isinstance(messages[-1], HumanMessage) or messages[-1].content != user_input:
