@@ -1,0 +1,20 @@
+{
+  "examples": [
+    {
+      "q": "Top 25 subjects by number of ED visits (show subject_id and count).",
+      "sql": "SELECT\n  ed.subject_id,\n  COUNT(*) AS num_ed_visits\nFROM physionet-data.mimiciv_ed.edstays AS ed\nGROUP BY ed.subject_id\nORDER BY num_ed_visits DESC\nLIMIT 25"
+    },
+    {
+      "q": "Top 10 primary ED diagnoses by title.",
+      "sql": "SELECT\n  d.icd_title AS cause,\n  COUNT(*) AS n\nFROM physionet-data.mimiciv_ed.diagnosis AS d\nWHERE d.seq_num = 1 AND d.icd_title IS NOT NULL\nGROUP BY cause\nORDER BY n DESC\nLIMIT 10"
+    },
+    {
+      "q": "Monthly ED visit counts across the full range, ordered by month.",
+      "sql": "SELECT\n  DATE_TRUNC(ed.intime, MONTH) AS month,\n  COUNT(*) AS n\nFROM physionet-data.mimiciv_ed.edstays AS ed\nGROUP BY month\nORDER BY month"
+    },
+    {
+      "q": "Admission rate by ESI level.",
+      "sql": "SELECT\n  ed.esi,\n  COUNTIF(ed.hadm_id IS NOT NULL) / COUNT(*) AS admit_rate,\n  COUNT(*) AS n\nFROM physionet-data.mimiciv_ed.edstays AS ed\nWHERE ed.esi IS NOT NULL\nGROUP BY ed.esi\nORDER BY ed.esi"
+    }
+  ]
+}

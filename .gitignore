@@ -13,6 +13,6 @@ logs/
 *.log.*
 
 # local settings/secrets
-*.json
-!package.json          
+!package.json   
+*settings.json       
 *.gz
