@@ -127,6 +127,7 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
             use_legacy_sql=False,
             maximum_bytes_billed=int(os.getenv("BQ_MAX_BYTES_BILLED", "1000000000")),
         )
+        logger.info("sql query=%s", sql)
         df = client.query(sql, job_config=job_cfg).to_dataframe()
         preview = csv_preview(df, n=min(20, limit_cap))
         elapsed = time.monotonic() - started
