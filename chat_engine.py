@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
+from google.cloud import bigquery
 
 LOG_FILENAME = f"agentTutorial-{time.strftime('%m-%d-%H%M%S')}.log"
 
@@ -36,8 +37,6 @@ def _load_examples_text() -> str:
         f"Q: {ex['q']}\nSQL:\n```sql\n{ex['sql']}\n```" for ex in data["examples"]
     )
 
-# ---- simple helpers for mimic (flattened) ----
-
 def tool_error(msg: str) -> str:
     return f"TOOL_ERROR[mimic]: {msg}"
 
@@ -52,8 +51,6 @@ def csv_preview(df, n: int) -> str:
     except Exception:
         return "(preview unavailable)"
 
-# ---- tools ----
-
 @tool
 def calculator(expression: str) -> str:
     """Evaluate a basic arithmetic expression."""
@@ -64,22 +61,15 @@ def calculator(expression: str) -> str:
         return f"calc error: {e}"
 
 @tool
-def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
-    """LLM-only SQL over MIMIC-IV ED (BigQuery). Returns SQL and CSV preview."""
-    from google.cloud import bigquery
-
+def mimic(question: str = "", top_n: int = 50) -> str:
+    """LLM only SQL over MIMIC IV ED (BigQuery). Returns SQL and CSV preview."""
     logger.info("mimic start q=%s", question)
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     model_name = os.getenv("SQL_GEN_MODEL", "gemini-2.5-flash")
-    if not question.strip():
-        return tool_error("question required")
-    if not api_key:
-        return tool_error("missing GEMINI_API_KEY or GOOGLE_API_KEY")
-
     limit_cap = int(top_n or 50)
     rules = (
-        "You are a BigQuery SQL assistant for MIMIC-IV ED.\n"
-        f"Return ONE StandardSQL query only in ```sql``` with LIMIT <= {limit_cap}.\n"
+        "You are a BigQuery SQL assistant for MIMIC IV ED.\n"
+        f"Return one Standard SQL query in ```sql``` with LIMIT <= {limit_cap}.\n"
         "Use tables: physionet-data.mimiciv_ed.* and physionet-data.mimiciv_3_1_hosp.d_icd_diagnoses.\n"
         "ED visit key is edstays.stay_id.\n"
     )
@@ -89,12 +79,6 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
     llm = ChatGoogleGenerativeAI(model=model_name, google_api_key=api_key, temperature=0.0)
     reply = llm.invoke([sys_msg, user_msg])
     sql = extract_sql((getattr(reply, "content", "") or "").strip())
-    if not sql:
-        return tool_error("no SQL produced")
-
-    if dry_run:
-        logger.info("mimic dry run")
-        return f"SQL (dry run):\n```sql\n{sql}\n```"
 
     client = bigquery.Client(project=os.getenv("GCP_PROJECT_ID"))
     job_cfg = bigquery.QueryJobConfig(
@@ -112,7 +96,6 @@ def mimic(question: str = "", top_n: int = 50, dry_run: bool = False) -> str:
     logger.info("mimic done rows=%d", len(df))
     return out
 
-# ---- agent ----
 
 class LCAgent:
     def __init__(self, api_key: str, model: str = "gemini-2.5-flash", temperature: float = 0.0):
@@ -121,37 +104,35 @@ class LCAgent:
         self.llm = ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=temperature).bind_tools(self.tools)
         self.system_text = (
             "You are a concise assistant. "
-            "Use calculator for arithmetic. Use mimic for MIMIC ED analytics."
+            "Use calculator for arithmetic. Use mimic for MIMIC-IV ED analytics."
         )
         graph = StateGraph(MessagesState)
         graph.add_node("llm", self._llm_node)
         graph.add_node("tools", ToolNode(self.tools))
         graph.add_edge(START, "llm")
-        graph.add_conditional_edges("llm", self._route, {"tools": "tools", END: END})
+       
+        graph.add_conditional_edges(
+            "llm",
+            lambda s: "tools" if isinstance(s["messages"][-1], AIMessage) and getattr(s["messages"][-1], "tool_calls", None) else END,
+            {"tools": "tools", END: END},
+        )
         graph.add_edge("tools", "llm")
         self.graph = graph.compile()
         logger.info("agent graph ready")
 
     def _llm_node(self, state: MessagesState):
         reply = self.llm.invoke(state["messages"])
-        if getattr(reply, "tool_calls", None):
-            logger.info("llm tool_calls")
-        else:
-            logger.info("llm reply: %s", (getattr(reply, "content", "") or "")[:200])
         return {"messages": [reply]}
 
-    @staticmethod
-    def _route(state: MessagesState):
-        last = state["messages"][-1]
-        return "tools" if isinstance(last, AIMessage) and getattr(last, "tool_calls", None) else END
-
-    @staticmethod
-    def _to_lc_history(history):
-        role_map = {"user": HumanMessage, "assistant": AIMessage}
-        return [role_map[m.get("role")](m.get("content", "")) for m in history if m.get("role") in role_map]
-
     def ask(self, history, user_input: str) -> str:
-        messages = [SystemMessage(self.system_text)] + self._to_lc_history(history)
-        state = self.graph.invoke({"messages": messages})
-        out = state.get("messages", [])
+        msgs = [SystemMessage(self.system_text)]
+        for m in history:
+            role = m.get("role")
+            content = m.get("content", "")
+            if role == "user":
+                msgs.append(HumanMessage(content))
+            elif role == "assistant":
+                msgs.append(AIMessage(content))
+        msgs.append(HumanMessage(user_input))
+        out = self.graph.invoke({"messages": msgs}).get("messages", [])
         return (getattr(out[-1], "content", "") or "").strip() if out else "(no response)"

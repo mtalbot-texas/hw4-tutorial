@@ -35,7 +35,7 @@ def setup_logging():
 
 setup_logging()
 
-from chat_engine import LCAgent  # noqa: E402
+from chat_engine import LCAgent  
 
 load_dotenv(dotenv_path=Path(__file__).with_name(".env"), override=False)
 
