@@ -106,15 +106,14 @@ class LCAgent:
         self.graph = graph.compile()
         logger.info("agent graph ready")
 
-def _llm_node(self, state: MessagesState):
-    reply = self.llm.invoke(state["messages"])
-    if getattr(reply, "tool_calls", None):
-        for tc in reply.tool_calls:
-            logger.info("llm tool_call name=%s args=%s", tc.get("name"), tc.get("args"))
-    else:
-        logger.info("llm text reply=%r", reply.content)
-    return {"messages": [reply]}
-
+    def _llm_node(self, state: MessagesState):
+        reply = self.llm.invoke(state["messages"])
+        if getattr(reply, "tool_calls", None):
+            for tc in reply.tool_calls:
+                logger.info("llm tool_call name=%s args=%s", tc.get("name"), tc.get("args"))
+        else:
+            logger.info("llm text reply=%r", reply.content)
+        return {"messages": [reply]}
 
     def ask(self, history, user_input: str) -> str:
         msgs = [SystemMessage(self.system_text)]
