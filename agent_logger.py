@@ -16,4 +16,5 @@ def get_logger() -> logging.Logger:
     sh.setFormatter(fmt)
     logger.addHandler(fh)
     logger.addHandler(sh)
+    logger.propagate = False
     return logger
