@@ -79,6 +79,7 @@ def mimic(question: str = "", top_n: int = 50) -> str:
         f"Rows returned: {len(df)}\n"
         f"Preview (CSV):\n```csv\n{preview}\n```"
     )
+    logger.info(out[preview])
     logger.info("mimic done rows=%d", len(df))
     return out
 
