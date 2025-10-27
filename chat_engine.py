@@ -3,7 +3,6 @@ import json
 import logging
 import os
 import re
-import time
 from pathlib import Path
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -13,21 +12,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.prebuilt import ToolNode
 from google.cloud import bigquery
 
-LOG_FILENAME = f"agentTutorial-{time.strftime('%m-%d-%H%M%S')}.log"
-
-def get_logger() -> logging.Logger:
-    logger = logging.getLogger("chat_engine")
-    if logger.handlers:
-        return logger
-    logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(LOG_FILENAME, encoding="utf-8")
-    sh = logging.StreamHandler()
-    fmt = logging.Formatter("%(asctime)s %(name)s %(levelname)s: %(message)s")
-    fh.setFormatter(fmt)
-    sh.setFormatter(fmt)
-    logger.addHandler(fh)
-    logger.addHandler(sh)
-    return logger
+from agent_logger import get_logger
 
 logger = get_logger()
 
