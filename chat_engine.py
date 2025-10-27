@@ -15,6 +15,7 @@ from google.cloud import bigquery
 from agent_logger import get_logger
 
 logger = get_logger()
+logger.setLevel(logging.INFO)
 
 def _load_examples_text() -> str:
     data = json.loads((Path(__file__).parent / "mimic_examples.json").read_text(encoding="utf-8"))
@@ -107,6 +108,7 @@ class LCAgent:
 
     def _llm_node(self, state: MessagesState):
         reply = self.llm.invoke(state["messages"])
+        logger.info("llm reply=%s", getattr(reply, "content", ""))
         return {"messages": [reply]}
 
     def ask(self, history, user_input: str) -> str:

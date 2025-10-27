@@ -13,15 +13,15 @@
       "sql": "SELECT\n  DATE_TRUNC(DATE(ed.intime), MONTH) AS month,\n  COUNT(*) AS n\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nGROUP BY month\nORDER BY month"
     },
     {
-      "q": "Admission rate by ESI (triage acuity) level.",
+      "q": "Admission rate by ESI level.",
       "sql": "SELECT\n  CAST(tr.acuity AS INT64) AS esi_level,\n  COUNTIF(ed.hadm_id IS NOT NULL) / COUNT(*) AS admit_rate,\n  COUNT(*) AS n\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nWHERE tr.acuity IS NOT NULL\nGROUP BY esi_level\nORDER BY esi_level"
     },
     {
-      "q": "Top 10 ED diagnoses by title for non-private insurance (admitted ED stays only; v3.1 admissions).",
+      "q": "Top 10 ED diagnoses by title for non private insurance.",
       "sql": "SELECT\n  d.icd_title AS diagnosis_title,\n  COUNT(*) AS num_visits\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.diagnosis` AS d\n  ON d.stay_id = ed.stay_id\nJOIN `physionet-data.mimiciv_3_1_hosp.admissions` AS adm\n  ON adm.hadm_id = ed.hadm_id\nWHERE\n  d.icd_title IS NOT NULL\n  AND adm.insurance != 'Private'\nGROUP BY diagnosis_title\nORDER BY num_visits DESC\nLIMIT 10"
     },
     {
-      "q": "Count of ED visits with a cough chief complaint in a given month (edit the month literal).",
+      "q": "Count of ED visits with a cough chief complaint in a given month.",
       "sql": "SELECT\n  COUNT(*) AS n\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nWHERE tr.chiefcomplaint IS NOT NULL\n  AND LOWER(tr.chiefcomplaint) LIKE '%cough%'\n  AND DATE_TRUNC(DATE(ed.intime), MONTH) = DATE '2015-12-01'"
     },
     {
@@ -29,11 +29,11 @@
       "sql": "SELECT\n  DATE_TRUNC(DATE(ed.intime), MONTH) AS month,\n  COUNT(*) AS n\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nWHERE tr.chiefcomplaint IS NOT NULL\n  AND LOWER(tr.chiefcomplaint) LIKE '%cough%'\nGROUP BY month\nORDER BY month"
     },
     {
-      "q": "Total medication orders for admitted ED visits with a cough chief complaint (v3.1 pharmacy).",
+      "q": "Total medication orders for admitted ED visits with a cough chief complaint.",
       "sql": "SELECT\n  COUNT(*) AS medication_orders\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nJOIN `physionet-data.mimiciv_3_1_hosp.pharmacy` AS ph\n  ON ph.hadm_id = ed.hadm_id\nWHERE ed.hadm_id IS NOT NULL\n  AND tr.chiefcomplaint IS NOT NULL\n  AND LOWER(tr.chiefcomplaint) LIKE '%cough%'"
     },
     {
-      "q": "Top 20 medications for admitted ED visits with a cough chief complaint (v3.1 pharmacy).",
+      "q": "Top 20 medications for admitted ED visits with a cough chief complaint.",
       "sql": "SELECT\n  ph.medication,\n  COUNT(*) AS n\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nJOIN `physionet-data.mimiciv_3_1_hosp.pharmacy` AS ph\n  ON ph.hadm_id = ed.hadm_id\nWHERE ed.hadm_id IS NOT NULL\n  AND tr.chiefcomplaint IS NOT NULL\n  AND LOWER(tr.chiefcomplaint) LIKE '%cough%'\n  AND ph.medication IS NOT NULL\nGROUP BY ph.medication\nORDER BY n DESC\nLIMIT 20"
     },
     {
@@ -45,15 +45,15 @@
       "sql": "SELECT\n  adm.admit_provider_id AS provider_id,\n  COUNT(*) AS admitted_ed_visits\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_3_1_hosp.admissions` AS adm\n  ON adm.hadm_id = ed.hadm_id\nWHERE ed.hadm_id IS NOT NULL\n  AND adm.admit_provider_id IS NOT NULL\nGROUP BY provider_id\nORDER BY admitted_ed_visits DESC\nLIMIT 20"
     },
     {
-      "q": "Top ordering providers of lab tests for admitted ED visits with a cough chief complaint (v3.1 labevents).",
+      "q": "Top ordering providers of lab tests for admitted ED visits with a cough chief complaint.",
       "sql": "SELECT\n  le.order_provider_id AS provider_id,\n  COUNT(*) AS lab_orders\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nJOIN `physionet-data.mimiciv_3_1_hosp.labevents` AS le\n  ON le.hadm_id = ed.hadm_id\nWHERE ed.hadm_id IS NOT NULL\n  AND tr.chiefcomplaint IS NOT NULL\n  AND LOWER(tr.chiefcomplaint) LIKE '%cough%'\n  AND le.order_provider_id IS NOT NULL\nGROUP BY provider_id\nORDER BY lab_orders DESC\nLIMIT 20"
     },
     {
-      "q": "Top prescribing providers for admitted ED visits with a cough chief complaint (v3.1 prescriptions).",
+      "q": "Top prescribing providers for admitted ED visits with a cough chief complaint.",
       "sql": "SELECT\n  pr.order_provider_id AS provider_id,\n  COUNT(*) AS prescriptions\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nJOIN `physionet-data.mimiciv_3_1_hosp.prescriptions` AS pr\n  ON pr.hadm_id = ed.hadm_id\nWHERE ed.hadm_id IS NOT NULL\n  AND tr.chiefcomplaint IS NOT NULL\n  AND LOWER(tr.chiefcomplaint) LIKE '%cough%'\n  AND pr.order_provider_id IS NOT NULL\nGROUP BY provider_id\nORDER BY prescriptions DESC\nLIMIT 20"
     },
     {
-      "q": "Top ordering providers of microbiology tests for admitted ED visits with a cough chief complaint (v3.1 microbiologyevents).",
+      "q": "Top ordering providers of microbiology tests for admitted ED visits with a cough chief complaint",
       "sql": "SELECT\n  me.order_provider_id AS provider_id,\n  COUNT(*) AS micro_orders\nFROM `physionet-data.mimiciv_ed.edstays` AS ed\nJOIN `physionet-data.mimiciv_ed.triage` AS tr USING (stay_id)\nJOIN `physionet-data.mimiciv_3_1_hosp.microbiologyevents` AS me\n  ON me.hadm_id = ed.hadm_id\nWHERE ed.hadm_id IS NOT NULL\n  AND tr.chiefcomplaint IS NOT NULL\n  AND LOWER(tr.chiefcomplaint) LIKE '%cough%'\n  AND me.order_provider_id IS NOT NULL\nGROUP BY provider_id\nORDER BY micro_orders DESC\nLIMIT 20"
     },
     {
@@ -61,7 +61,7 @@
       "sql": "SELECT\n  pr.drug AS drug,\n  COUNT(*) AS num_prescriptions\nFROM `physionet-data.mimiciv_3_1_hosp.prescriptions` AS pr\nWHERE\n  pr.order_provider_id = 'P73F56'\n  AND pr.drug IS NOT NULL\nGROUP BY drug\nORDER BY num_prescriptions DESC\nLIMIT 10"
     },
     {
-      "q": "Top primary ED diagnoses for visits where provider P73F56 wrote any prescription (link prescriptions → edstays → ED diagnosis).",
+      "q": "Top primary ED diagnoses for visits where provider P73F56 wrote any prescription.",
       "sql": "SELECT\n  d.icd_title AS diagnosis_title,\n  COUNT(DISTINCT ed.stay_id) AS n\nFROM `physionet-data.mimiciv_3_1_hosp.prescriptions` AS pr\nJOIN `physionet-data.mimiciv_ed.edstays` AS ed\n  ON ed.hadm_id = pr.hadm_id\nJOIN `physionet-data.mimiciv_ed.diagnosis` AS d\n  ON d.stay_id = ed.stay_id\nWHERE\n  pr.order_provider_id = 'P73F56'\n  AND d.seq_num = 1\n  AND d.icd_title IS NOT NULL\nGROUP BY diagnosis_title\nORDER BY n DESC\nLIMIT 10"
     }
   ]
