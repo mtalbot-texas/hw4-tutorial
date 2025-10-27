@@ -79,8 +79,7 @@ def mimic(question: str = "", top_n: int = 50) -> str:
         f"Rows returned: {len(df)}\n"
         f"Preview (CSV):\n```csv\n{preview}\n```"
     )
-    logger.info(out[preview])
-    logger.info("mimic done rows=%d", len(df))
+    logger.info("big query result=%s", df.to_json(orient="records", date_format="iso", date_unit="s", force_ascii=True))
     return out
 
 
