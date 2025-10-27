@@ -118,12 +118,16 @@ class LCAgent:
     def ask(self, history, user_input: str) -> str:
         msgs = [SystemMessage(self.system_text)]
         for m in history:
-            role = m.get("role")
-            content = m.get("content", "")
-            if role == "user":
+            role = m.get("role"); content = m.get("content", "")
+        if role == "user":
                 msgs.append(HumanMessage(content))
-            elif role == "assistant":
+        elif role == "assistant":
                 msgs.append(AIMessage(content))
         msgs.append(HumanMessage(user_input))
         out = self.graph.invoke({"messages": msgs}).get("messages", [])
-        return (getattr(out[-1], "content", "") or "").strip() if out else "(no response)"
+        if not out:
+            return "(no response)"
+        content = getattr(out[-1], "content", "")
+        if isinstance(content, list):  # Gemini can return a list of parts
+            content = " ".join([p.get("text", "") if isinstance(p, dict) else str(p) for p in content])
+        return (content or "").strip()
