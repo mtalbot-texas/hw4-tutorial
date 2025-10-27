@@ -119,9 +119,9 @@ class LCAgent:
         msgs = [SystemMessage(self.system_text)]
         for m in history:
             role = m.get("role"); content = m.get("content", "")
-        if role == "user":
+            if role == "user":
                 msgs.append(HumanMessage(content))
-        elif role == "assistant":
+            elif role == "assistant":
                 msgs.append(AIMessage(content))
         msgs.append(HumanMessage(user_input))
         out = self.graph.invoke({"messages": msgs}).get("messages", [])
